@@ -2,8 +2,9 @@
 // Check input FASTA and prepare indices
 //
 
-include { TABIX_BGZIP                 } from '../../modules/nf-core/tabix/bgzip/main.nf'
+include { GRABIX_CHECK                } from '../../modules/nf-core/grabix/check/main.nf'
 include { SAMTOOLS_FAIDX              } from '../../modules/nf-core/samtools/faidx/main.nf'
+include { TABIX_BGZIP                 } from '../../modules/nf-core/tabix/bgzip/main.nf'
 
 workflow INPUT_CHECK {
     take:
@@ -23,9 +24,25 @@ workflow INPUT_CHECK {
     meta_fasta = Channel.empty() // intermediate channel where we build our [ val(meta) , [ fasta ] ]
     fasta_file_name = fasta.getName()
 
-    if (params.input.endsWith(".gz")) {
+
+    meta_fasta = tuple([ id:fasta_file_name ], fasta)
+    GRABIX_CHECK(meta_fasta)
+    ch_versions = ch_versions.mix(GRABIX_CHECK.out.versions)
+
+    input_fasta = params.input
+    if ( (params.input.endsWith(".gz")) && (GRABIX_CHECK.out.compress_bgzip == 'no')) {
+        // Fasta is gzipped, but not bgzipped
+        // This will cause WFMASH to complain
+        // We will decompress it here, this way it is treated as a raw Fasta
+        TABIX_BGZIP(meta_fasta)
+
+        // Update the input Fasta with the new path
+        input_fasta = TABIX_BGZIP.out.output
+    }
+
+    if (input_fasta.endsWith(".gz")) {
         meta_fasta = tuple([ id:fasta_file_name ], fasta)
-        // TODO We want to check, if the input file was actually compressed with bgzip with the upcoming grabix module.
+
         // For now we assume it was bgzip. If not WFMASH will complain instantly anyhow.
         if (!fai_path.exists() || !gzi_path.exists()) { // the assumption is that none of these files exist if only one does not exist
             SAMTOOLS_FAIDX(meta_fasta, [[],[]])
@@ -38,10 +55,10 @@ workflow INPUT_CHECK {
         }
         ch_fasta = meta_fasta
     } else {
-        if (params.input.endsWith("fa")) {
+        if (input_fasta.endsWith("fa")) {
             fasta_file_name = fasta_file_name.substring(0, fasta_file_name.length() - 3)
         } else {
-            if (params.input.endswith("fasta")) {
+            if (input_fasta.endswith("fasta")) {
                 fasta_file_name = fasta_file_name.substring(0, fasta_file_name.length() - 6)
             } else { // we assume "fna" here
                 fasta_file_name = fasta_file_name.substring(0, fasta_file_name.length() - 4)
